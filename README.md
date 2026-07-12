@@ -58,12 +58,15 @@ MLFinalProject/
 ├── src/
 │   ├── walmart_prep.py      # საერთო preprocessing: WalmartFeatureBuilder, WMAE, folds, residual target, December gate
 │   ├── walmart_panel.py     # dense panel sequence-მოდელებისთვის (DLinear, N-BEATS, PatchTST, TFT)
-│   └── walmart_dl.py        # DLinear / N-BEATS არქიტექტურები + სავარჯიშო loop
+│   └── walmart_dl.py        # DLinear / N-BEATS / PatchTST არქიტექტურები + SeqForecaster + სავარჯიშო loop
 ├── model_experiment_LightGBM.ipynb
 ├── model_experiment_XGBoost.ipynb
 ├── model_experiment_DLinear.ipynb
 ├── model_experiment_ARIMA_SARIMA.ipynb
 ├── model_experiment_TimesFM.ipynb
+├── model_experiment_NBEATS.ipynb
+├── model_experiment_PatchTST.ipynb
+├── model_experiment_Prophet.ipynb
 ├── model_inferenceV1.ipynb    # საუკეთესო მოდელს იღებს Model Registry-დან და აგენერირებს submission-ს
 └── submissions/                # Kaggle submission ფაილები
 ```
@@ -278,6 +281,54 @@ notebook არის დიაგნოსტიკაზე ორიენტ
   ალაგებს. Registry version 6, alias `timesfm`.
 * ეს არის თანამედროვე დასკვნა: foundation მოდელი zero-shot-ად აჯობა კლასიკურ და მარტივ DL მოდელებს.
 
+### 7.6. Deep Learning — N-BEATS
+
+* **არქიტექტურა:** N-BEATS (Oreshkin et al., 2020) — fully-connected ბლოკების დასტა; თითო ბლოკი
+  აგენერირებს **backcast**-ს (გამოაკლდება input-ს, ამიტომ შემდეგი ბლოკები მოდელავენ იმას, რაც წინამ
+  ვერ დაიჭირა) და **forecast**-ს (ჯამდება საბოლოო პროგნოზში). DLinear-ის ორი წრფივი ფენისგან
+  განსხვავებით ეს ღრმა არაწრფივი მოდელია — კითხვა: ხომ არ ყიდულობს ეს დამატებითი ტევადობა რამეს
+  DLinear-ის (1816) მიღმა. იყენებს იმავე `WalmartPanel`-ს და `train_torch` loop-ს.
+* **residual study (მთავარი შემოწმება):** DLinear-ის დასკვნის ზუსტი გამეორება — residual რეჟიმში
+  **ნულოვანი ქსელი აღადგენს naive-ს** (0.0 სხვაობა). weight_decay-ის ზრდისას საუკეთესო კონფიგურაცია
+  სწორედ ყველაზე მაღალი wd-ს (**1.0**) აღმოჩნდა. ე.ი. N-BEATS-ის დამატებითი ტევადობის მიუხედავად,
+  წლიდან-წელს ნაშთი კვლავ ხმაურია გლობალური მოდელისთვის — capacity არ შველის.
+* **შედეგი:** best (residual, L=52, width=256, 2 blocks, 4 layers, wd=1.0) recent **1808.1** ≈ naive
+  (naive-ს ეთანაბრება, −0.05%). December gate: **REVIEW** (`xmas_aligned_lag` არ აქვს). Registry
+  version 7, alias `nbeats`.
+
+### 7.7. Deep Learning — PatchTST (transformer)
+
+* **არქიტექტურა:** PatchTST (Nie et al., 2023) — lookback-ს ჭრის overlapping **patch**-ებად,
+  თითოეულს წრფივად embed-ავს, Transformer encoder ურევს patch-ების მიმდევრობას, flatten head კი
+  horizon-ზე ასახავს. ორი დიზაინის არჩევანი ზუსტად ერგება ამ მონაცემებს: **channel-independence**
+  (ერთი საერთო მოდელი ყველა სერიაზე — `WalmartPanel`-ის კონტრაქტი) და **patching** (`patch_len=4,
+  stride=4` — attention ხედავს თვე-მასშტაბის ნაწილებს, არა ცალკეულ ხმაურიან კვირას).
+* **კითხვა:** ხომ არ პოულობს attention lookback-ზე სტრუქტურას, რომელსაც წრფივმა/MLP მოდელებმა ვერ.
+  **პასუხი — არა.** default კონფიგურაცია 2347-ს იძლეოდა; tuning-მა 1861-მდე ჩამოიყვანა (დიდი ძებნის
+  გაუმჯობესება), მაგრამ **naive-ს მაინც ვერ ჯობნის** (−3.0%). training loss ადრევე გავიდა plateau-ზე
+  (naive-ის დონეზე).
+* **შედეგი:** best (residual, L=52, patch4/stride4, d_model=128, 3 layers, wd=0.1) recent **1861.3**
+  — **სამივე DL მოდელიდან ყველაზე სუსტი**. December gate: **REVIEW −23.4%** (DLinear-ის მსგავსი).
+  Registry version 8, alias `patchtst`.
+* დასკვნა: transformer-ის დამატებული მექანიზმი აქ **უარესია** მარტივ DLinear-ზე — 3,331 მოკლე სერია
+  და ხმაურიანი წლიური ნაშთი აშიმშილებს მას.
+
+### 7.8. Classical — Prophet
+
+* **მიდგომა:** Prophet (Taylor & Letham, 2018) — **per-series** დეკომპოზიციური მოდელი: piecewise-linear
+  trend + Fourier წლიური სეზონურობა + holiday effects, MAP-ით. სხვა კუთხე დიზაინის სივრცეში: **ლოკალური**
+  (თითო მოდელი თითო `(Store, Dept)`-ზე — 3,331 fit, საერთო ძალა სერიებს შორის არ არის). `joblib`-ით
+  პარალელდება, `uncertainty_samples=0` ჩქარობს — სრული პანელი ~3.3 წუთი. Cold-start სერიები (< 30
+  დაკვირვება) ეცემა seasonal naive-ზე `predict_frame`-ით.
+* **მთავარი გადაწყვეტა — `pre_christmas` holiday term:** flagged შობის კვირის **წინა** კვირას
+  ვამატებთ ცალკე holiday რეგრესორად, რადგან daily-profile deconvolution-მა აჩვენა, რომ დეკემბრის
+  პიკი **2012-12-21-ზეა**, არა flagged 2012-12-28-ზე. ეს Prophet-ის პასუხია Christmas alignment-ზე.
+* **შედეგი — მოულოდნელად ძლიერი:** recent **1748.4** (naive-ს ჯობნის **3.3%-ით**). ეს **ჯობნის**
+  ARIMA-ს (1791.7), DLinear-ს (1816.2), N-BEATS-ს (1808.1) და PatchTST-ს (1861.3) — ე.ი. **მეორე
+  საუკეთესო არა-tree მოდელია** TimesFM-ის შემდეგ. December gate: **PASS** — შობის ცდომილება მხოლოდ
+  **−1.5%** (predicted peak 2012-12-21 სწორად). **ერთადერთი არა-tree მოდელი, რომელიც gate-ს გადის**
+  (boosting-ის წყვილის გარდა). `pre_christmas` term-მა იმუშავა. Registry version 9, alias `prophet`.
+
 ---
 
 ## 8. შედეგების საბოლოო შედარება
@@ -286,12 +337,15 @@ notebook არის დიაგნოსტიკაზე ორიენტ
 
 | # | მოდელი | ოჯახი | mirror | recent | early | mean | Gate | Registry |
 |---|---|---|---|---|---|---|---|---|
-| 1 | **XGBoost(ამ ეტაპზე საუკეთესო)** | Tree | **1817.7** | **1616.7** | **1851.2** | **1761.9** | PASS | `@xgboost` v3 |
+| 1 | **XGBoost (საუკეთესო)** | Tree | **1817.7** | **1616.7** | **1851.2** | **1761.9** | PASS | `@xgboost` v3 |
 | 2 | LightGBM | Tree | 1864.2 | 1650.3 | 1910.0 | 1808.2 | PASS | v2 |
 | 3 | TimesFM (zero-shot) | Foundation | — | 1679.1 | — | — | REVIEW −13.8% | `@timesfm` v6 |
-| 4 | ARIMA | Classical | — | 1791.7 | — | — | REVIEW −23.9% | `@arima` v5 |
+| 4 | **Prophet** | Classical | — | **1748.4** | — | — | **PASS** | `@prophet` v9 |
+| 5 | ARIMA | Classical | — | 1791.7 | — | — | REVIEW −23.9% | `@arima` v5 |
 | — | *seasonal naive (baseline)* | — | 2037.8 | 1807.2 | 2018.6 | 1954.5 | — | — |
-| 5 | DLinear | Deep Learning | — | 1816.2 | — | — | REVIEW −24% | `@dlinear` v4 |
+| 6 | N-BEATS | Deep Learning | — | 1808.1 | — | — | REVIEW | `@nbeats` v7 |
+| 7 | DLinear | Deep Learning | — | 1816.2 | — | — | REVIEW −24% | `@dlinear` v4 |
+| 8 | PatchTST | Deep Learning | — | 1861.3 | — | — | REVIEW −23.4% | `@patchtst` v8 |
 
 *(DL/კლასიკური/foundation მოდელები `recent` fold-ზე ფასდებიან, რადგან ეს ერთადერთი fold-ია საკმარისი
 ისტორიით 52-კვირიანი lookback-ისთვის.)*
@@ -319,8 +373,8 @@ notebook არის დიაგნოსტიკაზე ორიენტ
 
 ყველა მოდელის საუკეთესო ვარიანტი შენახულია **Pipeline-ად** (feature builder + მოდელი) და
 დარეგისტრირებულია ერთი registered model-ის — `WalmartSalesForecast` — ვერსიებად, alias-ებით
-(`xgboost`, `lightgbm`, `dlinear`, `arima`, `timesfm`). Pipeline პირდაპირ დაუმუშავებელ `test.csv`-ზე
-ეშვება.
+(`xgboost`, `lightgbm`, `dlinear`, `arima`, `timesfm`, `nbeats`, `patchtst`, `prophet`). Pipeline
+პირდაპირ დაუმუშავებელ `test.csv`-ზე ეშვება.
 
 `model_inference.ipynb` აკეთებს შემდეგს (ტრენინგის გარეშე):
 
@@ -351,9 +405,10 @@ XGBoost_Training
 └── XGBoost_Final              # Pipeline + December gate + registry
 ```
 
-ანალოგიური სტრუქტურა: `LightGBM_Training`, `DLinear_Training`, `ARIMA_Training`, `TimesFM_Training`.
-ყოველ run-ზე ვლოგავთ `wmae_mirror/recent/early`-ს და per-holiday MAE-ს — ერთი WMAE რიცხვი მალავს იმას,
-დაეხმარა თუ დააზიანა ცვლილება იმ 29.6% წონას, რომელიც სამ სადღესასწაულო კვირაზეა.
+ანალოგიური სტრუქტურა: `LightGBM_Training`, `DLinear_Training`, `ARIMA_Training`, `TimesFM_Training`,
+`NBEATS_Training`, `PatchTST_Training`, `Prophet_Training`. ყოველ run-ზე ვლოგავთ
+`wmae_mirror/recent/early`-ს და per-holiday MAE-ს — ერთი WMAE რიცხვი მალავს იმას, დაეხმარა თუ
+დააზიანა ცვლილება იმ 29.6% წონას, რომელიც სამ სადღესასწაულო კვირაზეა.
 
 ---
 
@@ -363,18 +418,28 @@ XGBoost_Training
    იდენტობასთან, `xmas_aligned_lag`-თან და ეგზოგენურ ცვლადებთან ერთად, და ლოკალურად split-ავენ. ეს
    უფრო ეფექტურია, ვიდრე დროის ფორმის გლობალურად მოდელირება.
 
-2. **seasonal naive ძალიან ძლიერი baseline-ია.** DLinear (1816) და ARIMA (1791) მას ძლივს ჯობნიან ან
-   უტოლდებიან. DLinear-ის residual study **მკაცრად** ამტკიცებს, რატომ: წლიდან-წელს ნაშთი გლობალური
-   წრფივი მოდელისთვის ხმაურია, და საუკეთესო რაც მას შეუძლია — naive-ის აღდგენა.
+2. **seasonal naive ძალიან ძლიერი baseline-ია.** ყველა გლობალური sequence მოდელი მას ძლივს ჯობნის ან
+   უტოლდება: DLinear (1816), N-BEATS (1808), PatchTST (1861 — naive-ზე უარესი). DLinear-ის residual
+   study და **N-BEATS-ის იმავე study-ის გამეორება** ერთ დასკვნაზე დგება: წლიდან-წელს ნაშთი გლობალური
+   მოდელისთვის ხმაურია, და საუკეთესო რაც მას შეუძლია — naive-ის აღდგენა. N-BEATS-ის ღრმა ტევადობა და
+   PatchTST-ის attention **არ შველის** — არქიტექტურის სირთულე აქ არ ყიდულობს სიგნალს.
 
 3. **Foundation მოდელი (TimesFM) მოულოდნელად ძლიერია.** zero-shot-ად, ტრენინგის გარეშე, აჯობა
-   კლასიკურ ARIMA-ს და DLinear-ს (1679 vs 1791/1816). ეს აჩვენებს pretrained ტემპორალური prior-ის ძალას.
+   კლასიკურ ARIMA-ს და ყველა DL მოდელს (1679 vs 1791/1808/1816/1861). ეს აჩვენებს pretrained
+   ტემპორალური prior-ის ძალას.
 
 4. **Christmas alignment არის ამოცანის გადამწყვეტი სირთულე**, და ის წონა-5 კვირაზეა. მოდელები,
-   რომლებსაც `xmas_aligned_lag` არ აქვთ (DLinear, ARIMA), December gate-ს ვერ გადიან (−24%). TimesFM
-   შუალედურია (−13.8%). მხოლოდ ხეები გადიან gate-ს.
+   რომლებსაც `xmas_aligned_lag` არ აქვთ (DLinear, N-BEATS, PatchTST, ARIMA), December gate-ს ვერ
+   გადიან (−23…−24%). TimesFM შუალედურია (−13.8%). **გამონაკლისი: Prophet გადის gate-ს (−1.5%)** —
+   მისი explicit `pre_christmas` holiday term პირდაპირ ალაგებს დეკემბრის პიკს, ე.ი. per-series
+   ინტერპრეტირებადი holiday რეგრესორი ცვლის `xmas_aligned_lag`-ს. ხეების გარდა ეს ერთადერთი მოდელია,
+   რომელიც gate-ს გადის.
 
-5. **SARIMA თეორიულად სწორია, პრაქტიკულად უვარგისი** ამ მონაცემებზე: 2.75 ციკლი სეზონურ პარამეტრებს
+5. **Prophet არის საუკეთესო არა-tree, არა-foundation მოდელი.** recent 1748.4 — ჯობნის ARIMA-ს,
+   DLinear-ს, N-BEATS-ს და PatchTST-ს, და ერთადერთია მათგან, რომელიც gate-ს გადის. per-series ლოკალური
+   მოდელი explicit holiday term-ით აქ აჯობა გლობალურ sequence მოდელებს.
+
+6. **SARIMA თეორიულად სწორია, პრაქტიკულად უვარგისი** ამ მონაცემებზე: 2.75 ციკლი სეზონურ პარამეტრებს
    იდენტიფიცირებადს ვერ ხდის (CI სიგანე ~54), და სრული პანელი ~6 საათი დასჭირდებოდა.
 
 ---
@@ -392,28 +457,29 @@ XGBoost_Training
 - ✅ `model_experiment_TimesFM.ipynb` (ბონუსი)
 - ✅ `model_inference.ipynb` + Model Registry
 
-### წევრი B (Deep Learning — შესავსები)
-- ⬜ `model_experiment_NBEATS.ipynb` — _[პარტნიორის შესავსები]_
-- ⬜ `model_experiment_PatchTST.ipynb` — _[პარტნიორის შესავსები]_
-- ⬜ `model_experiment_TFT.ipynb` (PatchTST/TFT — ერთი საკმარისია) — _[პარტნიორის შესავსები]_
-- ⬜ `model_experiment_Prophet.ipynb` — _[პარტნიორის შესავსები]_
-- ⬜ `model_inference.ipynb` + Model Registry
+### წევრი B (Deep Learning + Classical — შესრულებული)
+- ✅ `model_experiment_NBEATS.ipynb` (+ `PatchTST` არქიტექტურა და `SeqForecaster` `walmart_dl.py`-ში)
+- ✅ `model_experiment_PatchTST.ipynb` (transformer; PatchTST/TFT-იდან ერთი საკმარისია)
+- ✅ `model_experiment_Prophet.ipynb`
+- ✅ `model_inferenceV1.ipynb` გაშვება — leaderboard-ის განახლება 8 მოდელით, champion-ის ხელახალი არჩევა
 
 ---
 
 ## 13. გაშვების ინსტრუქცია
 
-**გარემო:** Google Colab (GPU runtime DL/TimesFM-ისთვის). მონაცემები ინახება Google Drive-ზე;
-ექსპერიმენტები ილოგება DagsHub MLflow-ზე.
+**გარემო:** Google Colab. DL მოდელები (DLinear, N-BEATS, PatchTST) და TimesFM საჭიროებენ **GPU
+runtime**-ს (T4); Prophet, ARIMA და tree-მოდელები **CPU runtime**-ზე ეშვება. მონაცემები ინახება
+Google Drive-ზე; ექსპერიმენტები ილოგება DagsHub MLflow-ზე.
 
 1. მოათავსე რეპოზიტორია (`src/` და CSV-ები) Drive-ზე, ან clone-ი GitHub-იდან.
 2. თითო `model_experiment_*.ipynb`-ს გაუშვი ზემოდან ქვემოთ. setup უჯრები ამონტაჟებენ Drive-ს,
-   პოულობენ პროექტს და აკავშირებენ MLflow-ს (`dagshub.init`).
-3. `model_inference.ipynb` ტვირთავს ჩემპიონს registry-დან და აგენერირებს
+   პოულობენ პროექტს და აკავშირებენ MLflow-ს (`dagshub.init`). DL/foundation notebook-ებს დაუყენე
+   GPU runtime, Prophet-ს — CPU.
+3. `model_inferenceV1.ipynb` ტვირთავს ჩემპიონს registry-დან და აგენერირებს
    `submissions/final_submission.csv`-ს Kaggle-ზე ასატვირთად.
 
-**საჭირო ბიბლიოთეკები:** `lightgbm`, `xgboost`, `torch`, `statsmodels`, `timesfm[torch]`, `mlflow`,
-`dagshub`, `scikit-learn`, `pandas`, `numpy`.
+**საჭირო ბიბლიოთეკები:** `lightgbm`, `xgboost`, `torch`, `statsmodels`, `timesfm[torch]`, `prophet`,
+`joblib`, `mlflow`, `dagshub`, `scikit-learn`, `pandas`, `numpy`.
 
 ---
 
