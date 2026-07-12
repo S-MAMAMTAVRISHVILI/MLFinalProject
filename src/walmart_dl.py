@@ -85,13 +85,6 @@ class NBeats(nn.Module):
 
 
 class PatchTST(nn.Module):
-    """Channel-independent PatchTST (Nie et al., 2023) on univariate windows.
-
-    The lookback is cut into overlapping patches, each patch is linearly embedded,
-    a Transformer encoder mixes the patch sequence, and a flatten head maps to the
-    horizon. Same [B, lookback] -> [B, horizon] contract as DLinear/NBeats, so it
-    trains with the same `train_torch` loop and WalmartPanel windows.
-    """
 
     def __init__(self, lookback: int, horizon: int, patch_len: int = 8, stride: int = 4,
                  d_model: int = 64, n_heads: int = 4, n_layers: int = 2,
@@ -114,7 +107,7 @@ class PatchTST(nn.Module):
         self.head = nn.Linear(n_patches * d_model, horizon)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        patches = x.unfold(1, self.patch_len, self.stride)      # [B, n_patches, patch_len]
+        patches = x.unfold(1, self.patch_len, self.stride)
         z = self.embed(patches) + self.pos
         z = self.encoder(z)
         return self.head(z.flatten(1))
@@ -188,12 +181,6 @@ def _forecast_horizon(net: DLinear, panel, device: str = "cpu") -> np.ndarray:
 
 
 class SeqForecaster:
-    """Registry-safe wrapper for any panel sequence net (DLinear, NBeats, PatchTST).
-
-    Stores the architecture name + kwargs + weights as plain numpy, so the pickled
-    object reloads on a fresh runtime without a live torch module, exactly like
-    DLinearForecaster — but reconstructs whichever architecture it was given.
-    """
 
     _ARCHS = {"DLinear": DLinear, "NBeats": NBeats, "PatchTST": PatchTST}
 

@@ -41,11 +41,11 @@ preprocessing-ს, ვალიდაციის სტრატეგიას
 WMAE = ( Σ wᵢ · |yᵢ − ŷᵢ| ) / Σ wᵢ ,      wᵢ = 5, თუ კვირა სადღესასწაულოა; სხვა შემთხვევაში 1
 ```
 
-ორი კრიტიკული დასკვნა ამ მეტრიკიდან, რომლებმაც განსაზღვრეს ჩვენი მთელი მიდგომა:
+ორი კრიტიკული დასკვნა ამ მეტრიკიდან, რომელმაც განსაზღვრა ჩვენი მიდგომა:
 
 * **ეს არის L1 (აბსოლუტური) მეტრიკა.** ამიტომ ყველა მოდელს ვავარჯიშებთ **MAE / absolute-error**
   objective-ით და არა RMSE-ით. (გადამოწმებული: per-pair median → WMAE 2419, per-pair mean → 2628
-  `recent` fold-ზე; median, რომელიც MAE-ოპტიმალურია, უკეთესია.)
+  `recent` fold-ზე.)
 * **სადღესასწაულო კვირები დომინირებენ.** test-ში ისინი მწკრივების მხოლოდ 7.76%-ია, მაგრამ WMAE-ის
   წონის **29.6%-ს** ატარებენ. ამიტომ ვიყენებთ `sample_weight = 5` სადღესასწაულო კვირებზე.
 
@@ -67,7 +67,7 @@ MLFinalProject/
 ├── model_experiment_NBEATS.ipynb
 ├── model_experiment_PatchTST.ipynb
 ├── model_experiment_Prophet.ipynb
-├── model_inferenceV1.ipynb    # საუკეთესო მოდელს იღებს Model Registry-დან და აგენერირებს submission-ს
+├── model_inference.ipynb    # საუკეთესო მოდელს იღებს Model Registry-დან და აგენერირებს submission-ს
 └── submissions/                # Kaggle submission ფაილები
 ```
 
@@ -116,17 +116,16 @@ mean $15,981, max $693,099. მწკრივების **0.305% უარყ
 ## 4. Preprocessing — მონაცემთა დამუშავება
 
 ყველა წესი იმპლემენტირებულია `WalmartFeatureBuilder`-ში (sklearn transformer), რომ **fit მოხდეს
-train-ზე და transform პირდაპირ დაუმუშავებელ `test.csv`-ზე** — ეს არის Pipeline-ის მოთხოვნის
-შესრულების საფუძველი. თითოეული გადაწყვეტილება ემპირიულადაა დასაბუთებული:
+train-ზე და transform პირდაპირ დაუმუშავებელ `test.csv`-ზე** — თითოეული გადაწყვეტილება არგუმენტირებულადაა დასაბუთებული:
 
 | პრობლემა | გადაწყვეტა | დასაბუთება |
 |---|---|---|
 | **შიდა ხარვეზები** | შევსება 0-ით | ხარვეზის მეზობელი გაყიდვების median $11.4, და 94.5% < $500 — ე.ი. დეპარტამენტი ფაქტობრივად არ ყიდდა |
 | **MarkDown1–5 (50–64% NA)** | შევსება 0 + `markdown_era` flag | ორი განსხვავებული მიზეზი: 2011-11-11-მდე საერთოდ არ იწერებოდა; მას შემდეგ NA ნიშნავს „markdown არ ყოფილა". მხოლოდ train-ის **35.9%** არის markdown-ის ეპოქაში, test-ის **100%** |
-| **CPI / Unemployment (585 NA)** | forward-fill + გადახრა მაღაზიის საშუალოდან | NA არის test-ის ბოლო 13 კვირა (reporting lag). test-ის CPI-ის **54%** სცდება train-ის მაქსიმუმს → ხეები ვერ extrapolate-ენ; ამიტომ raw-ის ნაცვლად გადახრას ვიყენებთ |
+| **CPI / Unemployment (585 NA)** | forward-fill + გადახრა მაღაზიის საშუალოდან | NA არის test-ის ბოლო 13 კვირა (reporting lag). test-ის CPI-ის **54%** სცდება train-ის მაქსიმუმს → ხეებმა ვერ დააფრედიქთეს; ამიტომ raw-ის ნაცვლად გადახრას ვიყენებთ |
 | **უარყოფითი გაყიდვები** | შენარჩუნება | მხოლოდ 0.305%, ნამდვილი returns |
 | **Store / Dept** | numeric (არა categorical) | categorical split-ის ძებნა 81 დეპარტამენტზე overfit-ს იწვევდა (ყველა fold-ზე უარესი) |
-| **target transform** | არა (log1p არა) | WMAE არის L1; log1p ცვლის loss-ის ფორმას. გამოსაცდელი, არა ჩავარდნილი დაშვება |
+| **target transform** | არა (log1p არა) | WMAE არის L1; log1p ცვლის loss-ის ფორმას. გამოსაცდელი და არა ჩავარდნილი დაშვება |
 
 ---
 
@@ -151,7 +150,7 @@ rolling-origin** ბლოკები. ავირჩიეთ 3 fold:
 `WalmartFeatureBuilder` **უარყოფს ნებისმიერ lag < 39-ს**. გამოსაყენებელი დიაპაზონი: 39 … 104.
 
 **seasonal naive** (იწინასწარმეტყველე იგივე `(Store, Dept)` 52 კვირით ადრე) — ეს არის რიცხვი,
-რომელიც ყველა მოდელმა უნდა დაამარცხოს. ეს არ არის სუსტი baseline: `lag_52` corr = 0.983.
+რომელსაც ყველა მოდელმა უნდა აჯობოს. ეს არ არის სუსტი baseline: `lag_52` corr = 0.983.
 
 ---
 
@@ -163,7 +162,7 @@ rolling-origin** ბლოკები. ავირჩიეთ 3 fold:
 * **კალენდარული** (ცნობილი ყველა მომავალი კვირისთვის): `woy_sin/cos`, ნიშნიანი მანძილები
   `days_to_{xmas,thanksgiving,superbowl,laborday,easter}`, `pre_xmas_days`, `is_*_week`
 * **გაყიდვის lag-ები (≥ 39):** `lag_{39,45,52,53,104}`
-* **წლის-წინანდელი ფანჯრის აგრეგატები:** `roll_{mean,std,median}_lag52_w5`, `level_mean_lag39_90`, `yoy_trend`
+* **1 წლის წინანდელი ფანჯრის აგრეგატები:** `roll_{mean,std,median}_lag52_w5`, `level_mean_lag39_90`, `yoy_trend`
 * **ეგზოგენური** (ცნობილი test-ის მთელ ჰორიზონტზე): `Temperature`, `Fuel_Price`, `CPI_dev`, `Unemployment_dev`, `MarkDown1–5`
 
 ### 6.1. Residual target — ერთ-ერთი ყველაზე მნიშვნელოვანი გადაწყვეტილება
@@ -202,7 +201,7 @@ Residual-მა Thanksgiving-კვირის MAE 5057-დან 2196-მდ�
 
 test-ის ყოველ დეკემბრის კვირას აქვს კალენდარული გეომეტრია, რომელიც **train-ში არასდროს გვხვდება**.
 ამიტომ ვერცერთი ვალიდაციის fold ვერ დაიჭერს დეკემბრის შეცდომას. ამის გადასაჭრელად ვაშენებთ
-**ყოველდღიური პროფილის დეკონვოლუციას** ორი დეკემბრის სეზონიდან (weekly აგრეგატებიდან ვაღდგენთ
+**ყოველდღიური პროფილის დეკონვოლუციას** ორი დეკემბრის სეზონიდან (weekly აგრეგატებიდან აღვადგენთ
 დღიურ shape-ს) და ვამოწმებთ, პროგნოზი შეესაბამება თუ არა ფიზიკურად მოსალოდნელ ფორმას. `december_gate`
 აქცევს მოდელს PASS/REVIEW-ად. ეს პროექტის ორიგინალური კონტრიბუციაა და ის, რაც ხეებს კლასიკური
 მოდელებისგან განასხვავებს. მნიშვნელოვანი ფაქტი, რომელიც პროფილმა გამოავლინა: **2012 წლის დეკემბრის
@@ -212,7 +211,7 @@ test-ის ყოველ დეკემბრის კვირას ა�
 
 ## 7. მოდელები და შედეგები
 
-თითოეული მოდელი ცალკე notebook-ია, ცალკე MLflow ექსპერიმენტით. ყველა notebook-ს აქვს ერთი და იგივე
+თითოეული მოდელი ცალკე notebook-შია, ცალკე MLflow ექსპერიმენტით. ყველა notebook-ს აქვს ერთი და იგივე
 სტრუქტურა: `Cleaning → Baseline → CV → Feature_Selection → Tuning → Final` (კლასიკურ/foundation
 მოდელებზე შესაბამისად ადაპტირებული).
 
@@ -229,13 +228,12 @@ test-ის ყოველ დეკემბრის კვირას ა�
 
 ### 7.2. Tree-Based — XGBoost - საუკეთესო მოდელი
 
-* **მიდგომა:** იგივე ინფრასტრუქტურა, `objective="reg:absoluteerror"`, `device="cuda"` (XGBoost-ის
-  pip wheel-ს აქვს CUDA მხარდაჭერა, LightGBM-ისგან განსხვავებით). `max_depth=8` ≈ LightGBM-ის
+* **მიდგომა:** იგივე ინფრასტრუქტურა, `objective="reg:absoluteerror"`. `max_depth=8` ≈ LightGBM-ის
   `num_leaves` დიაპაზონი.
 * **შედეგი (tuned, trial_06 — `lr=0.03, depth=10, n=1500, sub=0.9, col=0.8`):**
   mirror **1817.7**, recent **1616.7**, early **1851.2**, mean **1761.9**. December gate: **PASS**.
   Registry version 3, alias `xgboost`.
-* **ეს არის ამ ეტაპზე საუკეთესო შედეგის მქონე მოდელი** — ყველაზე დაბალი WMAE ყველა fold-ზე და gate PASS.
+* **ეს არის საუკეთესო შედეგის მქონე მოდელი** — ყველაზე დაბალი WMAE ყველა fold-ზე და gate PASS.
 
 ### 7.3. Deep Learning — DLinear
 
@@ -247,7 +245,7 @@ test-ის ყოველ დეკემბრის კვირას ა�
   და სრული მონაცემი ავარჯიშებს სრულფასოვნად. ეს DL-მოდელების „მონაცემზე შიმშილის" კონკრეტული ილუსტრაციაა.
 * **მთავარი აღმოჩენა (residual study):** residual რეჟიმში ნულოვანი ქსელი **ზუსტად** naive-ს
   აღადგენს (0.0 სხვაობა ყველა მწკრივზე). weight_decay-ის ზრდისას WMAE **მონოტონურად ეშვება naive-ისკენ**
-  და იქ ჩერდება: wd=0.0001→2391, wd=0.1→1947, wd=1.0→1816, wd=10→1808. ე.ი. წლიდან-წელს ცვლილება
+  და იქ ჩერდება: wd=0.0001→2391, wd=0.1→1947, wd=1.0→1816, wd=10→1808. ე.ი. წლიდან წელზე ცვლილება
   გლობალური წრფივი მოდელისთვის ხმაურია.
 * **შედეგი:** best (residual, L=52, wd=1.0) recent **1816.2** ≈ naive. December gate: **REVIEW −24%**
   (ვერ ასწორებს შობის alignment-ს, რადგან `xmas_aligned_lag` არ აქვს). Registry version 4, alias `dlinear`.
@@ -284,14 +282,14 @@ notebook არის დიაგნოსტიკაზე ორიენტ
 ### 7.6. Deep Learning — N-BEATS
 
 * **არქიტექტურა:** N-BEATS (Oreshkin et al., 2020) — fully-connected ბლოკების დასტა; თითო ბლოკი
-  აგენერირებს **backcast**-ს (გამოაკლდება input-ს, ამიტომ შემდეგი ბლოკები მოდელავენ იმას, რაც წინამ
+  აგენერირებს **backcast**-ს (გამოაკლდება input-ს, ამიტომ შემდეგი ბლოკები ამოდელებენ იმას, რაც წინამ
   ვერ დაიჭირა) და **forecast**-ს (ჯამდება საბოლოო პროგნოზში). DLinear-ის ორი წრფივი ფენისგან
   განსხვავებით ეს ღრმა არაწრფივი მოდელია — კითხვა: ხომ არ ყიდულობს ეს დამატებითი ტევადობა რამეს
   DLinear-ის (1816) მიღმა. იყენებს იმავე `WalmartPanel`-ს და `train_torch` loop-ს.
 * **residual study (მთავარი შემოწმება):** DLinear-ის დასკვნის ზუსტი გამეორება — residual რეჟიმში
   **ნულოვანი ქსელი აღადგენს naive-ს** (0.0 სხვაობა). weight_decay-ის ზრდისას საუკეთესო კონფიგურაცია
-  სწორედ ყველაზე მაღალი wd-ს (**1.0**) აღმოჩნდა. ე.ი. N-BEATS-ის დამატებითი ტევადობის მიუხედავად,
-  წლიდან-წელს ნაშთი კვლავ ხმაურია გლობალური მოდელისთვის — capacity არ შველის.
+  სწორედ ყველაზე მაღალი wd-ს (**1.0**) აღმოაჩნდა. ე.ი. N-BEATS-ის დამატებითი ტევადობის მიუხედავად,
+  წლიდან წელზე ნაშთი კვლავ ხმაურია გლობალური მოდელისთვის — capacity არ შველის.
 * **შედეგი:** best (residual, L=52, width=256, 2 blocks, 4 layers, wd=1.0) recent **1808.1** ≈ naive
   (naive-ს ეთანაბრება, −0.05%). December gate: **REVIEW** (`xmas_aligned_lag` არ აქვს). Registry
   version 7, alias `nbeats`.
@@ -359,13 +357,13 @@ notebook არის დიაგნოსტიკაზე ორიენტ
 | **XGBoost** | **2356.02** | **2423.48** |
 
 ეს არის **მაღალი შედეგი** — competition-ის გამარჯვებულის private ქულა იყო ~2301,
-ხოლო ძლიერი გადაწყვეტების უმეტესობა 2400–2900 დიაპაზონში იყო.
+ხოლო საუკეთესო ამოხსნების უმეტესობა 2400–2900 დიაპაზონში იყო.
 
 **რატომ არის Kaggle-ის ქულა (2356) უფრო მაღალი, ვიდრე CV `recent` (1616.7)?** ეს მოსალოდნელი და
 ლოგიკურია: `recent` fold **არ შეიცავს შობას** ვალიდაციაში, რეალური test კი შეიცავს — და სწორედ
 დეკემბრის კვირები (Christmas alignment, წონა-5) არის ამოცანის ყველაზე რთული ნაწილი. ე.ი. Kaggle-ის
 ქულა უფრო „მკაცრ" პერიოდს ზომავს. სწორედ ამიტომ იყო კრიტიკული `xmas_aligned_lag` და December gate —
-ისინი პირდაპირ ამ რთულ დეკემბრის კვირებზე მუშაობენ, რომელთაც CV ვერ ხედავს.
+ისინი პირდაპირ დეკემბრის რთულ კვირებზე მუშაობენ, რომელთაც CV ვერ ხედავს.
 
 ---
 
@@ -391,6 +389,9 @@ notebook არის დიაგნოსტიკაზე ორიენტ
 ---
 
 ## 10. MLflow-ის სტრუქტურა
+
+დაგსჰაბის რეპოზიტორიის ლინკი: https://dagshub.com/smama23/MLFinalProject
+MLflow ექსპერიმენტების ლინკი: https://dagshub.com/smama23/MLFinalProject.mlflow/#/experiments
 
 ექსპერიმენტები დალოგილია **DagsHub MLflow**-ზე (`smama23/MLFinalProject`). თითოეული არქიტექტურისთვის
 ცალკე ექსპერიმენტია, შიგნით run-ებით ეტაპების მიხედვით:
@@ -420,13 +421,12 @@ XGBoost_Training
 
 2. **seasonal naive ძალიან ძლიერი baseline-ია.** ყველა გლობალური sequence მოდელი მას ძლივს ჯობნის ან
    უტოლდება: DLinear (1816), N-BEATS (1808), PatchTST (1861 — naive-ზე უარესი). DLinear-ის residual
-   study და **N-BEATS-ის იმავე study-ის გამეორება** ერთ დასკვნაზე დგება: წლიდან-წელს ნაშთი გლობალური
-   მოდელისთვის ხმაურია, და საუკეთესო რაც მას შეუძლია — naive-ის აღდგენა. N-BEATS-ის ღრმა ტევადობა და
+   study და **N-BEATS-ის იმავე study-ის გამეორება** ერთ დასკვნაზე დგება: წლიდან წელზე ნაშთი გლობალური
+   მოდელისთვის ხმაურია, და საუკეთესო რაც მას შეუძლია, naive-ის აღდგენაა. N-BEATS-ის ღრმა ტევადობა და
    PatchTST-ის attention **არ შველის** — არქიტექტურის სირთულე აქ არ ყიდულობს სიგნალს.
 
 3. **Foundation მოდელი (TimesFM) მოულოდნელად ძლიერია.** zero-shot-ად, ტრენინგის გარეშე, აჯობა
-   კლასიკურ ARIMA-ს და ყველა DL მოდელს (1679 vs 1791/1808/1816/1861). ეს აჩვენებს pretrained
-   ტემპორალური prior-ის ძალას.
+   კლასიკურ ARIMA-ს და ყველა DL მოდელს (1679 vs 1791/1808/1816/1861). ეს აჩვენებს pretrained prior-ის ძალას.
 
 4. **Christmas alignment არის ამოცანის გადამწყვეტი სირთულე**, და ის წონა-5 კვირაზეა. მოდელები,
    რომლებსაც `xmas_aligned_lag` არ აქვთ (DLinear, N-BEATS, PatchTST, ARIMA), December gate-ს ვერ
@@ -440,7 +440,7 @@ XGBoost_Training
    მოდელი explicit holiday term-ით აქ აჯობა გლობალურ sequence მოდელებს.
 
 6. **SARIMA თეორიულად სწორია, პრაქტიკულად უვარგისი** ამ მონაცემებზე: 2.75 ციკლი სეზონურ პარამეტრებს
-   იდენტიფიცირებადს ვერ ხდის (CI სიგანე ~54), და სრული პანელი ~6 საათი დასჭირდებოდა.
+   იდენტიფიცირებადს ვერ ხდის (CI სიგანე ~54), და სრული პანელს ~6 საათი დასჭირდებოდა.
 
 ---
 
@@ -449,38 +449,36 @@ XGBoost_Training
 პროექტი გუნდურია. ფუნდამენტური სამუშაოები (EDA, preprocessing, `src/`, ვალიდაცია, December gate) შესრულდა
 ერთად. მოდელები განაწილდა:
 
-### წევრი A (ეს ნაწილი — შესრულებული)
+### სანდრო მამამთავრიშვილი
 - ✅ `model_experiment_LightGBM.ipynb`
-- ✅ `model_experiment_XGBoost.ipynb` (ჩემპიონი)
+- ✅ `model_experiment_XGBoost.ipynb` (საუკეთესო)
 - ✅ `model_experiment_DLinear.ipynb` (+ `walmart_panel.py`, `walmart_dl.py`)
 - ✅ `model_experiment_ARIMA_SARIMA.ipynb`
 - ✅ `model_experiment_TimesFM.ipynb` (ბონუსი)
 - ✅ `model_inference.ipynb` + Model Registry
 
-### წევრი B (Deep Learning + Classical — შესრულებული)
+### საბა დელიბაშვილი
 - ✅ `model_experiment_NBEATS.ipynb` (+ `PatchTST` არქიტექტურა და `SeqForecaster` `walmart_dl.py`-ში)
 - ✅ `model_experiment_PatchTST.ipynb` (transformer; PatchTST/TFT-იდან ერთი საკმარისია)
 - ✅ `model_experiment_Prophet.ipynb`
-- ✅ `model_inferenceV1.ipynb` გაშვება — leaderboard-ის განახლება 8 მოდელით, champion-ის ხელახალი არჩევა
+- ✅ `model_inference.ipynb` ხელახლა გაშვება და leaderboard-ის განახლება 8 მოდელის მიხედვით, საუკეთესო მოდელის ხელახლა არჩევა.
 
 ---
 
 ## 13. გაშვების ინსტრუქცია
 
 **გარემო:** Google Colab. DL მოდელები (DLinear, N-BEATS, PatchTST) და TimesFM საჭიროებენ **GPU
-runtime**-ს (T4); Prophet, ARIMA და tree-მოდელები **CPU runtime**-ზე ეშვება. მონაცემები ინახება
+runtime**-ს (T4); Prophet, ARIMA და tree-მოდელები ეშვება **CPU runtime**-ზე. მონაცემები ინახება
 Google Drive-ზე; ექსპერიმენტები ილოგება DagsHub MLflow-ზე.
 
 1. მოათავსე რეპოზიტორია (`src/` და CSV-ები) Drive-ზე, ან clone-ი GitHub-იდან.
-2. თითო `model_experiment_*.ipynb`-ს გაუშვი ზემოდან ქვემოთ. setup უჯრები ამონტაჟებენ Drive-ს,
+2. თითო `model_experiment_*.ipynb`-ს გაუშვი ზემოდან ქვემოთ. setup უჯრები უკავშირდებიან Drive-ს,
    პოულობენ პროექტს და აკავშირებენ MLflow-ს (`dagshub.init`). DL/foundation notebook-ებს დაუყენე
    GPU runtime, Prophet-ს — CPU.
-3. `model_inferenceV1.ipynb` ტვირთავს ჩემპიონს registry-დან და აგენერირებს
+3. `model_inference.ipynb` ტვირთავს საუკეთესო მოდელს registry-დან და აგენერირებს
    `submissions/final_submission.csv`-ს Kaggle-ზე ასატვირთად.
 
 **საჭირო ბიბლიოთეკები:** `lightgbm`, `xgboost`, `torch`, `statsmodels`, `timesfm[torch]`, `prophet`,
 `joblib`, `mlflow`, `dagshub`, `scikit-learn`, `pandas`, `numpy`.
 
 ---
-
-*დეტალური ტექნიკური დასაბუთება (ინგლისურად): [`docs/preprocessing_plan.md`](docs/preprocessing_plan.md).*
